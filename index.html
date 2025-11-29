@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Balança de Dois Lados — Projeto para VSCode</title>
+  <style>
+    :root{--bg:#f3f4f6;--wood:#8b5a2b;--beam:#5b4a3a;--pan:#d9d9d9;--weight:#2b60ff}
+    *{box-sizing:border-box;font-family:Inter, system-ui, Arial, sans-serif}
+    body{margin:0;min-height:100vh;background:linear-gradient(180deg,var(--bg),#fff);display:flex;align-items:flex-start;gap:1rem;padding:24px}
+
+    .app{width:100%;max-width:1100px;margin:0 auto}
+    header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+    h1{font-size:1.1rem;margin:0}
+    .controls{display:flex;gap:8px;align-items:center}
+    button{padding:8px 12px;border-radius:8px;border:1px solid rgba(0,0,0,0.08);background:white;cursor:pointer}
+    .main{display:flex;gap:18px}
+
+    /* left column: playground */
+    .playground{flex:1;min-height:520px;background:linear-gradient(180deg,#fff,#fafafa);border-radius:12px;padding:18px;box-shadow:0 6px 18px rgba(0,0,0,0.06)}
+    .stage{position:relative;height:420px;display:flex;align-items:center;justify-content:center}
+
+    /* base and stand */
+    .base{position:absolute;bottom:12px;width:380px;height:18px;background:var(--wood);border-radius:8px;box-shadow:0 4px 8px rgba(0,0,0,0.12)}
+    .stand{position:absolute;bottom:30px;width:16px;height:160px;background:var(--wood);border-radius:8px}
+    .pivot{position:absolute;bottom:180px;width:28px;height:28px;background:conic-gradient(#fff,#ddd);border-radius:50%;z-index:5;box-shadow:0 2px 6px rgba(0,0,0,0.2)}
+
+    /* beam */
+    .beam-wrap{position:relative;height:220px;display:flex;align-items:center;justify-content:center}
+    .beam{width:520px;height:20px;background:var(--beam);border-radius:10px;display:flex;align-items:center;justify-content:center;transform-origin:center center;transition:transform 120ms linear}
+    .arm-mark{width:2px;height:26px;background:rgba(255,255,255,0.18);position:absolute}
+
+    /* pans */
+    .pan{position:absolute;bottom:64px;width:140px;height:32px;background:var(--pan);border-radius:0 0 80px 80px;box-shadow:0 6px 10px rgba(0,0,0,0.12);display:flex;align-items:center;justify-content:center}
+    .pan.left{left:calc(50% - 290px);}
+    .pan.right{left:calc(50% + 150px);}
+
+    /* weight elements */
+    .weight{width:44px;height:44px;border-radius:8px;background:var(--weight);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:600;cursor:grab;user-select:none}
+    .weight:active{cursor:grabbing}
+    .palette{width:240px;background:white;border-radius:12px;padding:12px;box-shadow:0 6px 18px rgba(0,0,0,0.04)}
+    .palette h3{margin:0 0 8px 0;font-size:0.95rem}
+    .preset-row{display:flex;gap:8px}
+    .info{margin-top:12px;font-size:0.9rem;color:#333}
+    .status{margin-top:12px;padding:8px;border-radius:8px;background:#fff}
+
+    /* draggable inside pan */
+    .pan .placed{position:absolute;bottom:4px;transform:translateX(-50%)}
+
+    footer{margin-top:12px;font-size:0.85rem;color:#555}
+
+    @media (max-width:920px){
+      body{padding:16px}
+      .main{flex-direction:column}
+      .palette{width:100%}
+      .playground{order:2}
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Balança de dois lados — Projeto HTML (arrastar & soltar)</h1>
+      <div class="controls">
+        <button id="resetBtn">Limpar</button>
+        <button id="addPresetBtn">Adicionar peso</button>
+      </div>
+    </header>
+
+    <div class="main">
+      <div class="playground">
+        <div class="stage" id="stage">
+          <div class="base"></div>
+          <div class="stand" style="left:50%"></div>
+          <div class="pivot" id="pivot"></div>
+          <div class="beam-wrap">
+            <div class="beam" id="beam">
+              <!-- marks for distances (for reference) -->
+              <div class="arm-mark" style="left:calc(50% - 210px)"></div>
+              <div class="arm-mark" style="left:calc(50% - 140px)"></div>
+              <div class="arm-mark" style="left:calc(50% + 140px)"></div>
+              <div class="arm-mark" style="left:calc(50% + 210px)"></div>
+            </div>
+          </div>
+
+          <div class="pan left" id="pan-left" data-side="left" data-distance="200"></div>
+          <div class="pan right" id="pan-right" data-side="right" data-distance="200"></div>
+        </div>
+
+        <div class="status">
+          <div>Torque esquerdo: <strong id="torqueL">0</strong></div>
+          <div>Torque direito: <strong id="torqueR">0</strong></div>
+          <div>Peso total esquerdo: <strong id="massL">0</strong> g</div>
+          <div>Peso total direito: <strong id="massR">0</strong> g</div>
+        </div>
+
+        <footer>
+          Arraste pesos da paleta para as bandejas. Solte em posições diferentes nas bandejas para alterar a distância ao pivô — o ângulo da viga mudará automaticamente.
+        </footer>
+      </div>
+
+      <aside class="palette">
+        <h3>Paleta de pesos</h3>
+        <div class="preset-row" id="presets">
+          <!-- presets serão inseridos aqui -->
+        </div>
+        <div style="margin-top:10px">
+          <label for="newWeightVal">Novo peso (g): </label>
+          <input id="newWeightVal" type="number" value="100" min="5" style="width:100px;padding:6px;margin-left:8px" />
+          <button id="createWeight">Criar</button>
+        </div>
+        <div class="info">
+          Dicas:<br>
+          - Arraste um peso e solte dentro da bandeja; a distância é definida pela posição dentro da bandeja.<br>
+          - Clique em um peso dentro da bandeja para removê-lo.
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script>
+    // Config
+    const stage = document.getElementById('stage');
+    const beam = document.getElementById('beam');
+    const panLeft = document.getElementById('pan-left');
+    const panRight = document.getElementById('pan-right');
+    const torqueL = document.getElementById('torqueL');
+    const torqueR = document.getElementById('torqueR');
+    const massL = document.getElementById('massL');
+    const massR = document.getElementById('massR');
+
+    // scale: 1 pixel = 1 mm (for torque calc we can use arbitrary units) -> convert grams*mm
+    const PIXEL_TO_MM = 1; // keep simple
+    const MAX_ANGLE = 18; // degrees
+    const ANGLE_SENSITIVITY = 0.0006; // tweak to get pleasant rotation
+
+    // initial presets
+    const presetWeights = [50, 100, 200, 500];
+    const presetsContainer = document.getElementById('presets');
+
+    function createPreset(weight){
+      const el = document.createElement('div');
+      el.className = 'weight';
+      el.draggable = true;
+      el.innerText = weight;
+      el.dataset.weight = weight;
+      el.title = weight + ' g — arraste para a bandeja';
+      el.addEventListener('dragstart', onDragStart);
+      presetsContainer.appendChild(el);
+      return el;
+    }
+
+    function buildPresets(){
+      presetsContainer.innerHTML = '';
+      presetWeights.forEach(w => createPreset(w));
+    }
+
+    buildPresets();
+
+    document.getElementById('createWeight').addEventListener('click', ()=>{
+      const v = Number(document.getElementById('newWeightVal').value) || 0;
+      if(v <= 0) return alert('Insira um valor válido');
+      createPreset(v);
+    });
+
+    document.getElementById('addPresetBtn').addEventListener('click', ()=>{
+      const v = Number(prompt('Valor do novo peso em gramas (ex: 150):', '150'));
+      if(v && v>0) { presetWeights.push(v); buildPresets(); }
+    });
+
+    document.getElementById('resetBtn').addEventListener('click', resetAll);
+
+    function onDragStart(ev){
+      const weight = ev.target.dataset.weight || ev.target.innerText || 100;
+      ev.dataTransfer.setData('text/plain', weight);
+      // for visuals
+      ev.dataTransfer.effectAllowed = 'copy';
+    }
+
+    // Allow drop on pans
+    [panLeft, panRight].forEach(pan => {
+      pan.addEventListener('dragover', (e)=>{e.preventDefault();});
+      pan.addEventListener('drop', (e)=>{e.preventDefault(); handleDrop(e, pan);});
+    });
+
+    function handleDrop(e, pan){
+      const weight = Number(e.dataTransfer.getData('text/plain')) || 0;
+      // compute x position of drop relative to stage
+      const stageRect = stage.getBoundingClientRect();
+      const dropX = e.clientX - stageRect.left;
+      const pivot = document.getElementById('pivot').getBoundingClientRect();
+      const pivotCenterX = pivot.left - stageRect.left + pivot.width/2;
+      const distancePx = Math.abs(dropX - pivotCenterX);
+
+      placeWeightOnPan(pan, weight, dropX - (pan.getBoundingClientRect().left - stageRect.left));
+      updatePhysics();
+    }
+
+    // Place a weight element into pan at a given offsetX (relative to pan's left)
+    function placeWeightOnPan(pan, weight, offsetInPanX){
+      // create element
+      const w = document.createElement('div');
+      w.className = 'weight placed';
+      w.innerText = weight;
+      w.dataset.weight = weight;
+      // position: compute distance to pivot via absolute coordinates
+      const stageRect = stage.getBoundingClientRect();
+      const panRect = pan.getBoundingClientRect();
+      const pivotRect = document.getElementById('pivot').getBoundingClientRect();
+      const centerX = pivotRect.left - stageRect.left + pivotRect.width/2;
+      // x position where we put the element in stage coordinates
+      // if offsetInPanX is undefined, set center of pan
+      let xStage;
+      if(typeof offsetInPanX === 'number'){
+        xStage = panRect.left - stageRect.left + offsetInPanX;
+      } else {
+        xStage = panRect.left - stageRect.left + panRect.width/2;
+      }
+      // set style: horizontally position using left relative to pan element's container (stage)
+      // we'll append to pan and use absolute coords relative to pan
+      const relativeXToPan = xStage - (panRect.left - stageRect.left);
+      w.style.left = relativeXToPan + 'px';
+
+      // store distance to pivot in mm (pixels->mm)
+      const distPx = Math.abs(xStage - centerX);
+      w.dataset.dist = Math.round(distPx);
+      w.title = weight + ' g — distância ao pivô: ' + w.dataset.dist + ' mm\nClique para remover';
+
+      // click to remove placed weight
+      w.addEventListener('click', ()=>{ w.remove(); updatePhysics(); });
+
+      pan.appendChild(w);
+    }
+
+    // Recompute torques and rotate beam
+    function updatePhysics(){
+      const placedLeft = Array.from(panLeft.querySelectorAll('.placed'));
+      const placedRight = Array.from(panRight.querySelectorAll('.placed'));
+
+      let torqueLeft = 0, torqueRight = 0, massLeft = 0, massRight = 0;
+
+      const stageRect = stage.getBoundingClientRect();
+      const pivotRect = document.getElementById('pivot').getBoundingClientRect();
+      const pivotCenterX = pivotRect.left - stageRect.left + pivotRect.width/2;
+
+      placedLeft.forEach(el => {
+        const w = Number(el.dataset.weight);
+        const posX = (el.getBoundingClientRect().left - stageRect.left) + el.getBoundingClientRect().width/2;
+        const d = Math.abs(posX - pivotCenterX) * PIXEL_TO_MM;
+        torqueLeft += w * d;
+        massLeft += w;
+      });
+      placedRight.forEach(el => {
+        const w = Number(el.dataset.weight);
+        const posX = (el.getBoundingClientRect().left - stageRect.left) + el.getBoundingClientRect().width/2;
+        const d = Math.abs(posX - pivotCenterX) * PIXEL_TO_MM;
+        torqueRight += w * d;
+        massRight += w;
+      });
+
+      torqueL.innerText = Math.round(torqueLeft);
+      torqueR.innerText = Math.round(torqueRight);
+      massL.innerText = massLeft;
+      massR.innerText = massRight;
+
+      // compute angle: proportional to (torqueR - torqueL)
+      const diff = torqueRight - torqueLeft;
+      const angle = Math.max(-MAX_ANGLE, Math.min(MAX_ANGLE, diff * ANGLE_SENSITIVITY));
+      beam.style.transform = `rotate(${angle}deg)`;
+
+      // visual: nudge pans vertical positions slightly based on angle
+      panLeft.style.transform = `translateY(${clamp(-angle*1.4, -18, 18)}px)`;
+      panRight.style.transform = `translateY(${clamp(angle*1.4, -18, 18)}px)`;
+    }
+
+    function clamp(v, a, b){ return Math.max(a, Math.min(b, v)); }
+
+    // Make existing presets draggable (rebind when new ones created)
+    function rebindPresets(){
+      Array.from(presetsContainer.querySelectorAll('.weight')).forEach(w=>{
+        w.draggable = true;
+        w.addEventListener('dragstart', onDragStart);
+      });
+    }
+
+    // reset
+    function resetAll(){
+      [panLeft, panRight].forEach(p=>{
+        Array.from(p.querySelectorAll('.placed')).forEach(x=>x.remove());
+        p.style.transform = '';
+      });
+      beam.style.transform = '';
+      torqueL.innerText = '0'; torqueR.innerText = '0'; massL.innerText='0'; massR.innerText='0';
+    }
+
+    // support dropping by clicking on pan (for mobile): tap to add last created weight
+    panLeft.addEventListener('click', (e)=>{
+      // if a preset is selected by dragging? fallback: open small prompt
+      const w = prompt('Qual peso (g) deseja colocar na bandeja esquerda?','100');
+      if(w) placeWeightOnPan(panLeft, Number(w)); updatePhysics();
+    });
+    panRight.addEventListener('click', (e)=>{
+      const w = prompt('Qual peso (g) deseja colocar na bandeja direita?','100');
+      if(w) placeWeightOnPan(panRight, Number(w)); updatePhysics();
+    });
+
+    // initial rebind
+    rebindPresets();
+
+    // keep physics updated if window resizes
+    window.addEventListener('resize', ()=>{ updatePhysics(); });
+
+    // small UX: allow dragging presets within palette to copy into pans
+    // Also support dragging placed weights within the same pan to change distance
+    // Implement pointer events for pan children
+    let dragEl = null;
+    document.addEventListener('pointerdown', (e)=>{
+      const t = e.target;
+      if(t.classList.contains('placed')){
+        dragEl = t;
+        dragEl.setPointerCapture(e.pointerId);
+      }
+    });
+    document.addEventListener('pointermove', (e)=>{
+      if(!dragEl) return;
+      // move within its parent (pan)
+      const pan = dragEl.parentElement;
+      const panRect = pan.getBoundingClientRect();
+      const stageRect = stage.getBoundingClientRect();
+      let xStage = e.clientX - stageRect.left;
+      // compute relative to pan
+      let rel = xStage - (panRect.left - stageRect.left);
+      rel = Math.max(8, Math.min(panRect.width-8, rel));
+      dragEl.style.left = rel + 'px';
+      // update stored distance
+      const pivotRect = document.getElementById('pivot').getBoundingClientRect();
+      const pivotCenterX = pivotRect.left - stageRect.left + pivotRect.width/2;
+      const posX = (dragEl.getBoundingClientRect().left - stageRect.left) + dragEl.getBoundingClientRect().width/2;
+      dragEl.dataset.dist = Math.round(Math.abs(posX - pivotCenterX));
+      dragEl.title = dragEl.dataset.weight + ' g — distância ao pivô: ' + dragEl.dataset.dist + ' mm\nClique para remover';
+      updatePhysics();
+    });
+    document.addEventListener('pointerup', (e)=>{ if(dragEl){ try{ dragEl.releasePointerCapture(e.pointerId); }catch(_){} dragEl=null; } });
+
+    // small helper to create an initial set of placed demo weights
+    (function seedDemo(){
+      // nothing initially — user can add
+    })();
+
+  </script>
+</body>
+</html>
